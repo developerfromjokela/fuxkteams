@@ -1,0 +1,28 @@
+<div class="content-container" style="">
+    <h1>Teams</h1>
+    <form id="teams-form">
+        <div class="form-group">
+            <label>Teams-kokouksen linkki</label>
+            <input type="url" class="form-control" disabled="disabled" placeholder="Teams linkki" id="teamslink">
+        </div>
+        <div class="form-group">
+            <label>Liittymisaika</label>
+            <input type="datetime-local" class="form-control" disabled="disabled" placeholder="Liittymisaika" id="jointime">
+        </div>
+    </form>
+    <br>
+    <div>
+        <p>Teamsin aloitukseen on jälellä: <p id="tillTeams">....</p></p>
+    </div>
+</div>
+<footer class="toolbar toolbar-footer">
+    <div class="toolbar-actions">
+        <button class="btn btn-negative" disabled="disabled" onclick="emptyTeamsForm()" id="clear-teams">
+            Tyhjennä
+        </button>
+
+        <button class="btn btn-primary pull-right " disabled="disabled" onclick="startTeams()" id="start-teams">
+            Aloita
+        </button>
+    </div>
+</footer>
