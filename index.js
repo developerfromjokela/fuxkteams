@@ -8,12 +8,18 @@ const {authorize, listCourses, getCourse, getCourseWorks, getCourseWorkSubmissio
 const express = require('express');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth')
 puppeteer.use(StealthPlugin())
+const uuid = require('uuid');
+
+const teamsDataDir = "/tmp/teams-"+uuid.v4()
+const classroomDataDir = "/tmp/classroom-"+uuid.v4()
 
 global.gapi = {"installed":{"client_id":"1088585936344-g03gd5gimi2b07futhollc89aopgnkma.apps.googleusercontent.com","project_id":"edison-7c08c","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":"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","redirect_uris":["http://127.0.0.1:45445"]}}
 let teamsConfiguration = {
     teamsUrl: null,
     joinTimestamp: null,
-    configLocked: false
+    configLocked: false,
+    browserUrl: null,
+    name: null
 }
 
 let classroomConfiguration = {
@@ -83,34 +89,41 @@ function sleep(ms) {
 
 
 const submitClassroom = async (work, win) => {
-    await classroomWindow.goto(work.alternateLink)
+    let newPage;
     try {
-        await classroomWindow.waitForSelector('div[guidedhelpid="turnInButton"]', {timeout: 6000});
+        newPage = await classroomWindow.newPage();
+    } catch (e) {
+        classroomWindow = await configureClassroomWindow(undefined, undefined, true);
+        newPage = await classroomWindow.newPage();
+    }
+    await newPage.goto(work.alternateLink)
+    try {
+        await newPage.waitForSelector('div[guidedhelpid="turnInButton"]', {timeout: 60000});
     } catch (e) {
         console.error(e);
     }
     try {
-        await classroomWindow.waitForSelector('div[guidedhelpid="submissionManager_markAsDone"]', {timeout: 6000});
+        await newPage.waitForSelector('div[guidedhelpid="submissionManager_markAsDone"]', {timeout: 6000});
     } catch (e) {
         console.error(e);
     }
     try {
-        await classroomWindow.click('div[guidedhelpid="turnInButton"]');
+        await newPage.click('div[guidedhelpid="turnInButton"]');
     } catch (e) {
         console.error(e);
     }
     try {
-        await classroomWindow.click('div[guidedhelpid="submissionManager_markAsDone"]');
+        await newPage.click('div[guidedhelpid="submissionManager_markAsDone"]');
     } catch (e) {
         console.error(e);
     }
     try {
         await sleep(1000);
-        await classroomWindow.keyboard.press('Tab');
+        await newPage.keyboard.press('Tab');
         await sleep(500);
-        await classroomWindow.keyboard.press('Tab');
+        await newPage.keyboard.press('Tab');
         await sleep(500);
-        await classroomWindow.keyboard.press('Enter');
+        await newPage.keyboard.press('Enter');
     } catch (e) {
 
     }
@@ -146,9 +159,36 @@ const startMonitor = (course, win) => {
 };
 
 const joinMeeting = async (win) => {
+    let newPage;
     try {
-        await teamsWindow.click(".join-btn");
-        await teamsWindow.waitFor(() => !document.querySelector(".join-btn"));
+        newPage = await teamsWindow.newPage();
+    } catch (e) {
+        classroomWindow = await configureTeamsWindow(undefined, true);
+        newPage = await teamsWindow.newPage();
+    }
+    await newPage.goto(teamsConfiguration.browserUrl);
+    try {
+        if (newPage.url().includes("launcher.html")) {
+            await newPage.click("button[data-tid=\"joinOnWeb\"]")
+            await newPage.waitForSelector("button[track-summary=\"Continue in call/meetup without device access\"]", {timeout: 60000});
+            await newPage.click("button[track-summary=\"Continue in call/meetup without device access\"]");
+        }
+    } catch (e) {
+        console.error(e);
+    }
+    try {
+        if (!newPage.url().includes("pre-join-calling"))
+            await newPage.waitForFunction("window.location.href.includes('pre-join-calling')")
+        try {
+            await newPage.waitFor('#username')
+            await newPage.focus('#username')
+            await newPage.keyboard.type(teamsConfiguration.name ?? "vieras");
+        } catch (e) {
+            console.log(e);
+        }
+        await newPage.waitFor(() => document.querySelector(".join-btn"));
+        await newPage.click(".join-btn");
+        await newPage.waitFor(() => !document.querySelector(".join-btn"));
         dialog.showMessageBox({title: "Suoritettu onnistuneesti", message: "Liitin sinut teamsiin!"});
         try {
             win.webContents
@@ -157,10 +197,28 @@ const joinMeeting = async (win) => {
     } catch (e) {
         console.error(e);
         // try alternative / start from scratch
-        await teamsWindow.goto(teamsConfiguration.teamsUrl);
-        await teamsWindow.waitForFunction("window.location.href.includes('pre-join-calling')")
-        await teamsWindow.click(".join-btn");
-        await teamsWindow.waitFor(() => !document.querySelector(".join-btn"));
+        await newPage.goto(teamsConfiguration.teamsUrl);
+        try {
+            if (newPage.url().includes("launcher.html")) {
+                await newPage.click("button[data-tid=\"joinOnWeb\"]")
+                await newPage.waitForSelector("button[track-summary=\"Continue in call/meetup without device access\"]", {timeout: 60000});
+                await sleep(3000);
+                await newPage.click("button[track-summary=\"Continue in call/meetup without device access\"]");
+                await sleep(3000);
+            }
+        } catch (e) {
+            console.error(e);
+        }
+        await newPage.waitForFunction("window.location.href.includes('pre-join-calling')")
+        try {
+            await newPage.waitFor('#username')
+            await newPage.focus('#username')
+            await newPage.keyboard.type(teamsConfiguration.name ?? "vieras");
+        } catch (e) {
+            console.log(e);
+        }
+        await newPage.click(".join-btn");
+        await newPage.waitFor(() => !document.querySelector(".join-btn"));
         dialog.showMessageBox({title: "Suoritettu onnistuneesti", message: "Liitin sinut teamsiin!"});
         teamsConfiguration.configLocked = false;
         try {
@@ -170,7 +228,7 @@ const joinMeeting = async (win) => {
     }
 }
 
-const configureTeamsWindow = async (win) => {
+const configureTeamsWindow = async (win, noInit=false) => {
     const browserFetcher = puppeteer.createBrowserFetcher();
     const localChromiums = await browserFetcher.localRevisions();
     console.log(localChromiums);
@@ -178,21 +236,33 @@ const configureTeamsWindow = async (win) => {
     const { executablePath } = await browserFetcher.revisionInfo(localChromiums[0]);
     console.log(executablePath);
 
-    const browser = await puppeteer.launch({
+    teamsWindow = await puppeteer.launch({
         executablePath: executablePath,
-        headless: false
+        headless: false,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        dumpio: true,
+        userDataDir: teamsDataDir
     });
     console.log("Launch!");
-    teamsWindow = await browser.newPage();
-    await teamsWindow.goto(teamsConfiguration.teamsUrl);
-    await teamsWindow.waitForFunction("window.location.href.includes('pre-join-calling')")
-    console.log("Done!");
-    dialog.showMessageBox({title: "Teams valmiina", message: "Kirjoita nimesi, säädä tarvittaessa asetukset ja anna ohjelman olla päällä."});
-    startTimer(Date.parse(teamsConfiguration.joinTimestamp), win)
+   if (!noInit) {
+       let teamsPage = await teamsWindow.newPage();
+       await teamsPage.goto(teamsConfiguration.teamsUrl);
+       await teamsPage.waitForFunction("window.location.href.includes('pre-join-calling')", {timeout: 0})
+       console.log("Done!");
+       teamsConfiguration.browserUrl = teamsPage.url()
+        const name = await prompt({title: "Nimi", label: "Syötä nimesi"})
+        if (name === null) {
+            throw new Error("Syötä nimi!");
+        }
+        teamsConfiguration.name = name;
+        dialog.showMessageBox({title: "Teams valmiina", message: "Säädä tarvittaessa asetukset ja anna ohjelman olla päällä."});
+        startTimer(Date.parse(teamsConfiguration.joinTimestamp), win)
+    }
 }
 
-const configureClassroomWindow = async (course, win) => {
-    dialog.showMessageBox({title: "Kirjaudu classroomiin", message: "Kirjaudu classroomiin uudessa selainikkunassa, mutta älä sulje ikkunaa sen jälkeen!"});
+const configureClassroomWindow = async (course, win, noInit=false) => {
+    if (!noInit)
+        dialog.showMessageBox({title: "Kirjaudu classroomiin", message: "Kirjaudu classroomiin uudessa selainikkunassa, mutta älä sulje ikkunaa sen jälkeen!"});
     const browserFetcher = puppeteer.createBrowserFetcher();
     const localChromiums = await browserFetcher.localRevisions();
     console.log(localChromiums);
@@ -200,16 +270,22 @@ const configureClassroomWindow = async (course, win) => {
     const { executablePath } = await browserFetcher.revisionInfo(localChromiums[0]);
     console.log(executablePath);
 
-    const browser = await puppeteer.launch({
+    classroomWindow = await puppeteer.launch({
         executablePath: executablePath,
-        headless: false
+        headless: false,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        dumpio: true,
+        userDataDir: classroomDataDir
     });
     console.log("Launch!");
-    classroomWindow = await browser.newPage();
-    await classroomWindow.goto(course.alternateLink);
-    await classroomWindow.waitForFunction("window.location.href.includes('classroom.google.com/c/')", {timeout: 0})
-    console.log("Done!");
-    startMonitor(course, win);
+    if (!noInit) {
+        let classroomPage = await classroomWindow.newPage();
+        await classroomPage.goto(course.alternateLink);
+        await classroomPage.waitForFunction("window.location.href.includes('classroom.google.com/c/')", {timeout: 0})
+        console.log("Done!");
+        startMonitor(course, win);
+    }
+
 }
 
 async function getNewToken(oAuth2Client, callback, params) {
